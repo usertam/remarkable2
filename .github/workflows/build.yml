@@ -9,28 +9,19 @@ jobs:
     - uses: actions/checkout@v4
     - uses: DeterminateSystems/nix-installer-action@main
     - uses: DeterminateSystems/magic-nix-cache-action@main
-    - name: Print derivation map and build command
+    - name: Build userland archive
       run: |
-        nix eval --raw .#packages.aarch64-linux.remarkable2.drvMap --apply 'builtins.toJSON' | jq
-        nix eval --raw .#packages.aarch64-linux.remarkable2.userland.buildCommand
-    - name: Build userland and its archive
-      run: |
-        nix build .#packages.aarch64-linux.remarkable2.userland --print-build-logs --keep-going --no-link
-        nix build .#packages.aarch64-linux.remarkable2.userland-archive --print-build-logs --keep-going
-        cp -a result/tarball/userland-archive.tar.xz remarkable2-userland-archive.tar.xz
-    - name: Print userland runtime dependencies
-      run: |
-        nix-store --query --requisites $(nix eval --raw .#packages.aarch64-linux.remarkable2.userland)
+        nix build .#packages.aarch64-linux.archive.userland --print-build-logs --keep-going
+        cp -a result/tarball/remarkable2-userland-*.tar.xz .
     - uses: actions/upload-artifact@v4
       with:
         name: remarkable2-userland-archive
-        path: remarkable2-userland-archive.tar.xz
-    - name: Build kernel and its archive
+        path: remarkable2-userland-*.tar.xz
+    - name: Build kernel archive
       run: |
-        nix build .#packages.aarch64-linux.remarkable2.pkgs.linuxPackages.kernel --print-build-logs --keep-going --no-link
-        nix build .#packages.aarch64-linux.remarkable2.kernel-archive --print-build-logs --keep-going
-        cp -a result/tarball/kernel-archive.tar.xz remarkable2-kernel-archive.tar.xz
+        nix build .#packages.aarch64-linux.archive.kernel --print-build-logs --keep-going
+        cp -a result/tarball/remarkable2-kernel-*.tar.xz .
     - uses: actions/upload-artifact@v4
       with:
         name: remarkable2-kernel-archive
-        path: remarkable2-kernel-archive.tar.xz
+        path: remarkable2-kernel-*.tar.xz

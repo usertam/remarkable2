@@ -5,83 +5,51 @@
 
   outputs =
     { self, nixpkgs }:
+    let
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
+      forAllSystems = nixpkgs.lib.genAttrs systems;
+      overlay = import ./overlay.nix;
+
+      # Stamp archives with the commit date and short hash, e.g. "20250329.eb0e0f2".
+      # Falls back to a dirty/zeroed rev when the tree isn't committed.
+      stamp = "${builtins.substring 0 8 self.lastModifiedDate}.${
+        builtins.substring 0 7 (self.rev or self.dirtyRev or "0000000")
+      }";
+    in
     {
-      packages = nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (system: {
-        remarkable2.pkgs = nixpkgs.legacyPackages.${system}.pkgsCross.remarkable2.pkgsStatic.extend (
-          final: prev: {
-            iproute2 = prev.iproute2.override { python3 = null; };
-            socat = prev.socat.overrideAttrs (prev: { hardeningEnable = [ ]; });
-            linuxPackages = prev.callPackage ./pkgs/remarkable2-kernel/package.nix { };
-            alpine-musl-getent = prev.callPackage ./pkgs/alpine-musl-getent/package.nix { };
-          }
-        );
+      overlays.default = overlay;
 
-        remarkable2.drvMap = nixpkgs.lib.mapAttrs' (
-          drvName: binList:
-          let
-            # Process names with dots in them, e.g. "util-linux.mount" -> pkgs.util-linux.mount
-            inherit (self.packages.${system}.remarkable2) pkgs;
-            path = nixpkgs.lib.splitString "." drvName;
-            drv = nixpkgs.lib.getAttrFromPath path pkgs;
-            # Format the binary list in bash brace expansion format.
-            wrapIfMulti = nixpkgs.lib.optionalString (builtins.length binList > 1);
-            drvBins = (wrapIfMulti "{") + (builtins.concatStringsSep "," binList) + (wrapIfMulti "}");
-          in
-          nixpkgs.lib.nameValuePair drvName {
-            inherit drv drvBins;
-          }
-        ) (import ./groups.nix);
+      # Overlaid cross set, exposed for building/debugging individual cross packages
+      # e.g. `nix build .#legacyPackages.aarch64-linux.socat`
+      legacyPackages = forAllSystems (
+        system: nixpkgs.legacyPackages.${system}.pkgsCross.remarkable2.pkgsStatic.extend overlay
+      );
 
-        remarkable2.userland =
-          nixpkgs.legacyPackages.${system}.runCommand "remarkable2-userland"
-            {
-              srcs = nixpkgs.lib.mapAttrsToList (_: v: v.drv) self.packages.${system}.remarkable2.drvMap;
-            }
-            ''
-              mkdir -p $out/bin
-              cp -at $out/bin \
-                ${nixpkgs.lib.concatMapAttrsStringSep " \\\n  " (
-                  _: v: "${v.drv}/bin/${v.drvBins}"
-                ) self.packages.${system}.remarkable2.drvMap}
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          remarkablePkgs = self.legacyPackages.${system};
 
-              # Replace the wrapped tailscaled with a non-wrapped one
-              rm -f $out/bin/tailscaled
-              mv $out/bin/.tailscaled-wrapped $out/bin/tailscaled
-            '';
-
-        remarkable2.userland-archive =
-          nixpkgs.legacyPackages.${system}.runCommand "remarkable2-userland-archive"
-            {
-              src = self.packages.${system}.remarkable2.userland;
-              nativeBuildInputs = with nixpkgs.legacyPackages.${system}; [
-                gnutar
-                pixz
-              ];
-            }
-            ''
-              mkdir -p $out/tarball
-              time tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner -c $src | \
-                pixz -9 > $out/tarball/userland-archive.tar.xz
-            '';
-
-        remarkable2.kernel-archive =
-          nixpkgs.legacyPackages.${system}.runCommand "remarkable2-kernel-archive"
-            {
-              srcs = with self.packages.${system}.remarkable2.pkgs; [
-                linuxPackages.kernel
-                linuxPackages.kernel.dev
-                linuxPackages.kernel.modules
-              ];
-              nativeBuildInputs = with nixpkgs.legacyPackages.${system}; [
-                gnutar
-                pixz
-              ];
-            }
-            ''
-              mkdir -p $out/tarball
-              time tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner -c $srcs | \
-                pixz -9 > $out/tarball/kernel-archive.tar.xz
-            '';
-      });
+          userland = pkgs.callPackage ./pkgs/userland/package.nix {
+            inherit remarkablePkgs;
+            cmds = import ./cmds.nix;
+            services = ./pkgs/systemd-services;
+          };
+          kernel = pkgs.callPackage ./pkgs/kernel/package.nix { inherit remarkablePkgs; };
+          mkArchive = pkgs.callPackage ./pkgs/archive/package.nix { inherit stamp; };
+        in
+        {
+          inherit userland kernel;
+          archive = {
+            userland = mkArchive userland;
+            kernel = mkArchive kernel;
+          };
+          default = userland;
+        }
+      );
     };
 }

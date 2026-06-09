@@ -106,7 +106,6 @@
     "ip" "ss" "tc"
     "ifstat" "lnstat" "nstat" "rtstat" "ctstat"
     "rtacct" "rtmon" 
-    "routel"
   ];
 
   iptables = [
