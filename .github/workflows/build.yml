@@ -1,27 +1,40 @@
-name: "Build artifacts"
+name: Build artifacts
 
-on: [push, pull_request]
+on:
+  workflow_dispatch:
+  push:
+    branches:
+    - master
+  pull_request:
+
+permissions:
+  id-token: write
 
 jobs:
   build:
-    runs-on: ubuntu-22.04-arm
+    name: Build artifacts
+    runs-on: ubuntu-26.04-arm
     steps:
-    - uses: actions/checkout@v4
-    - uses: DeterminateSystems/nix-installer-action@main
-    - uses: DeterminateSystems/magic-nix-cache-action@main
+    - uses: actions/checkout@main
+    - uses: NixOS/nix-installer-action@main
+    - uses: Mic92/niks3-action@main
+      with:
+        server-url: https://niks3.usertam.dev
     - name: Build userland archive
       run: |
-        nix build .#packages.aarch64-linux.archive.userland --print-build-logs --keep-going
-        cp -a result/tarball/remarkable2-userland-*.tar.xz .
+        nix build --print-build-logs --keep-going --fallback \
+          .#packages.aarch64-linux.archive.userland
+        echo "USERLAND_ARCHIVE_NAME=$(basename result/tarball/remarkable2-userland-*.tar.xz .tar.xz)" >> $GITHUB_ENV
     - uses: actions/upload-artifact@v4
       with:
-        name: remarkable2-userland-archive
-        path: remarkable2-userland-*.tar.xz
+        name: ${{ env.USERLAND_ARCHIVE_NAME }}
+        path: result/tarball/remarkable2-userland-*.tar.xz
     - name: Build kernel archive
       run: |
-        nix build .#packages.aarch64-linux.archive.kernel --print-build-logs --keep-going
-        cp -a result/tarball/remarkable2-kernel-*.tar.xz .
+        nix build --print-build-logs --keep-going --fallback \
+          .#packages.aarch64-linux.archive.kernel
+        echo "KERNEL_ARCHIVE_NAME=$(basename result/tarball/remarkable2-kernel-*.tar.xz .tar.xz)" >> $GITHUB_ENV
     - uses: actions/upload-artifact@v4
       with:
-        name: remarkable2-kernel-archive
-        path: remarkable2-kernel-*.tar.xz
+        name: ${{ env.KERNEL_ARCHIVE_NAME }}
+        path: result/tarball/remarkable2-kernel-*.tar.xz
