@@ -33,22 +33,54 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           remarkablePkgs = self.legacyPackages.${system};
-
+        in
+        {
           userland = pkgs.callPackage ./pkgs/userland/package.nix {
             inherit remarkablePkgs;
             cmds = import ./cmds.nix;
             services = ./pkgs/systemd-services;
           };
-          kernel = pkgs.callPackage ./pkgs/kernel/package.nix { inherit remarkablePkgs; };
-          mkArchive = pkgs.callPackage ./pkgs/archive/package.nix { inherit stamp; };
-        in
-        {
-          inherit userland kernel;
-          archive = {
-            userland = mkArchive userland;
-            kernel = mkArchive kernel;
-          };
-          default = userland;
+
+          kernel =
+            let
+              inherit (remarkablePkgs.linuxPackages) kernel;
+            in
+            pkgs.runCommand "remarkable2-kernel" { } ''
+              mkdir -p $out
+
+              cp -r ${kernel.out}/. $out
+              cp -r ${kernel.modules}/. $out
+
+              # `modules` ships lib/modules/<ver>/source as a dangling symlink into the
+              # build sandbox (/build/source); it collides with dev's real source tree.
+              # Drop broken symlinks so dev's real source/build dirs merge in cleanly.
+              chmod +w $out/lib/modules/*
+              rm -f $out/lib/modules/*/source
+
+              cp -r ${kernel.dev}/. $out
+            '';
+
+          archive = nixpkgs.lib.genAttrs [ "userland" "kernel" ] (
+            name:
+            let
+              src = self.packages.${system}.${name};
+            in
+            pkgs.runCommand "${src.name}-archive"
+              {
+                inherit src;
+                nativeBuildInputs = with pkgs; [
+                  gnutar
+                  pixz
+                ];
+              }
+              ''
+                mkdir -p $out/tarball
+                time tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner -C $src -c . | \
+                  pixz -9 > $out/tarball/${src.name}-${stamp}.tar.xz
+              ''
+          );
+
+          default = self.packages.${system}.userland;
         }
       );
     };
